@@ -11,7 +11,6 @@ from psycopg2 import IntegrityError
 from psycopg2.extras import RealDictCursor
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-import requests
 
 tesseract_command = os.environ.get('TESSERACT_CMD') or shutil.which('tesseract')
 if tesseract_command:
@@ -24,12 +23,14 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 UPLOAD_FOLDER = os.path.join(app.root_path, 'uploads')
 MVP_VOTE_LOCK_KEY = 817246091
-MVP_LOCK_MESSAGE = 'Glosowanie zablokowane - sezon w toku'
+MVP_LOCK_MESSAGE = 'Głosowanie zablokowane - sezon w toku'
 
-# Zmienne integracji z Discordem ze zmiennych srodowiskowych
-DISCORD_BOT_TOKEN = os.environ.get('DISCORD_BOT_TOKEN')
-DISCORD_STORAGE_CHANNEL_ID = os.environ.get('DISCORD_STORAGE_CHANNEL_ID')
+# JEŚLI KORZYSTASZ Z WINDOWSA, ODKOMENTUJ PONIŻSZĄ LINIJKĘ I WPISZ SWOJĄ ŚCIEŻKĘ:
+# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
+# ==========================================
+# 1. ROZBUDOWANA BAZA DANYCH
+# ==========================================
 class DatabaseConnection:
     def __init__(self, connection):
         self._connection = connection
@@ -56,6 +57,7 @@ class DatabaseConnection:
     def close(self):
         self._connection.close()
 
+
 def connect_db():
     database_url = os.environ.get('DATABASE_URL')
     if not database_url:
@@ -63,11 +65,13 @@ def connect_db():
     connection = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
     return DatabaseConnection(connection)
 
+
 def generate_unique_player_pin(conn):
     while True:
         pin_code = f'{secrets.randbelow(1_000_000):06d}'
         if not conn.execute('SELECT 1 FROM players WHERE pin_code = %s', (pin_code,)).fetchone():
             return pin_code
+
 
 def init_advanced_db():
     conn = connect_db()
@@ -175,7 +179,6 @@ def init_advanced_db():
         CREATE UNIQUE INDEX IF NOT EXISTS players_pin_code_unique
         ON players (pin_code) WHERE pin_code IS NOT NULL
     ''')
-    
     players_without_pin = conn.execute('SELECT id FROM players WHERE pin_code IS NULL FOR UPDATE').fetchall()
     for player in players_without_pin:
         cursor.execute(
@@ -196,49 +199,37 @@ def init_advanced_db():
     conn.commit()
     conn.close()
 
+
 def require_roles(*roles):
     def decorator(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
             if not session.get('user_id'):
-                return jsonify({'error': 'Zaloguj sie, aby kontynuowac.'}), 401
+                return jsonify({'error': 'Zaloguj się, aby kontynuować.'}), 401
             if roles and session.get('role') not in roles:
-                return jsonify({'error': 'Brak uprawnien do tej operacji.'}), 403
+                return jsonify({'error': 'Brak uprawnień do tej operacji.'}), 403
             return view(*args, **kwargs)
         return wrapped
     return decorator
 
+
 def json_error(message, status):
     return jsonify({'error': message}), status
+
 
 def points_for_map_score(team_score, opponent_score):
     if team_score > opponent_score:
         return 3
     return {2: 2, 1: 1}.get(team_score, 0)
-def upload_to_discord_storage(filepath):
-    """
-    Wysyla plik graficzny bezposrednio na dedykowany kanal Discorda
-    i zwraca staly link CDN, oszczedzajac limity bazy danych PostgreSQL.
-    """
-    if not DISCORD_BOT_TOKEN or not DISCORD_STORAGE_CHANNEL_ID:
-        return None
-    
-    url = f"https://discord.com{DISCORD_STORAGE_CHANNEL_ID}/messages"
-    headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}"}
-    
-    try:
-        with open(filepath, 'rb') as f:
-            files = {'file': (os.path.basename(filepath), f, 'image/png')}
-            response = requests.post(url, headers=headers, files=files)
-            if response.status_code in (200, 201):
-                res_data = response.json()
-                if res_data.get('attachments'):
-                    return res_data['attachments'][0]['url']
-    except Exception as e:
-        print(f"Blad wysylania do Discord CDN Storage: {e}")
-    return None
 
+# ==========================================
+# 2. ZAKTUALIZOWANA LOGIKA BOTA OCR
+# ==========================================
 def process_screenshot_bot(image_path):
+    """
+    Bot analizuje układ kolumn z mapy Balistic R:
+    Nick | E (Kills) | D (Deaths) | A (Assists) | Obrażenia (Damage) | Rośliny (Plants) | Defuses
+    """
     try:
         img = Image.open(image_path)
         img_gray = img.convert('L') 
@@ -249,14 +240,21 @@ def process_screenshot_bot(image_path):
         
         for line in lines:
             parts = line.split()
+            # Wiersze z danymi zawodników mają zazwyczaj min. 7-8 elementów na tym ekranie podsumowania
             if len(parts) >= 7:
                 try:
+                    # Mapowanie kolumn od końca (wiersz na Twoim screenie):
+                    # ... [NICK] [KILLS] [DEATHS] [ASSISTS] [DAMAGE] [PLANTS] [DEFUSES] [RANGA]
+                    # Indeksy ujemne zabezpieczają nas, gdy Nick gracza składa się z kilku spacji/wyrazów
+                    
                     defuses = int(parts[-2]) if parts[-2].isdigit() else 0
                     plants = int(parts[-3]) if parts[-3].isdigit() else 0
                     damage = int(parts[-4]) if parts[-4].isdigit() else 0
                     assists = int(parts[-5]) if parts[-5].isdigit() else 0
                     deaths = int(parts[-6]) if parts[-6].isdigit() else 0
                     kills = int(parts[-7]) if parts[-7].isdigit() else 0
+                    
+                    # Wszystko co zostało z przodu (przed statystykami) to Nick gracza
                     nickname = " ".join(parts[:-7])
                     
                     if nickname and (kills > 0 or damage > 0 or deaths > 0):
@@ -268,50 +266,25 @@ def process_screenshot_bot(image_path):
                             "damage": damage,
                             "plants": plants,
                             "defuses": defuses,
-                            "aces": 0,
+                            "aces": 0,       # Czeka na uzupełnienie przez kapitana w formularzu
                             "is_mvp": 0
                         })
                 except (ValueError, IndexError):
                     continue 
+                    
         return extracted_rows
     except Exception as e:
-        print(f"Blad bota OCR: {e}")
+        print(f"Błąd bota OCR: {e}")
         return []
 
-# =========================================================================
-# SZYBKA KOREKTA BLEDOW OCR PRZEZ ADMINISTRATORA (ZMIANA CYFERKI)
-# =========================================================================
-@app.route('/api/admin/stats/update', methods=['POST'])
-@require_roles('super_admin')
-def update_player_stat_manually():
-    """
-    Pozwala administratorowi poprawic dowolna pojedyncza cyfre w statystykach meczu,
-    jezeli bot OCR nieprawidlowo zinterpretowal zrzut ekranu.
-    """
-    data = request.get_json(silent=True) or {}
-    stat_id = data.get('stat_id') 
-    field = data.get('field')     
-    new_value = data.get('new_value')
+# ==========================================
+# 3. ZAKTUALIZOWANE ENDPOINTY API
+# ==========================================
 
-    allowed_fields = ['kills', 'deaths', 'asysty', 'damage', 'plants', 'defuses', 'aces', 'is_mvp']
-    if field not in allowed_fields:
-        return json_error('Nieprawidlowe pole do modyfikacji.', 400)
-    
-    if not isinstance(new_value, int) or new_value < 0:
-        return json_error('Wartosc musi byc liczba calkowita nieujemna.', 400)
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-    conn = connect_db()
-    cursor = conn.execute(
-        f'UPDATE player_match_stats SET {field} = %s WHERE id = %s',
-        (new_value, stat_id)
-    )
-    conn.commit()
-    affected = cursor.rowcount
-    conn.close()
-
-    if not affected:
-        return json_error('Nie znaleziono podanego rekordu statystyk.', 404)
-    return jsonify({'message': 'Pomyslnie zaktualizowano wartosc. Zmiany sa widoczne tekstowo.'})
 @app.route('/api/registrations', methods=['POST'])
 def submit_team_registration():
     data = request.get_json(silent=True) or {}
@@ -320,15 +293,15 @@ def submit_team_registration():
     players = [name.strip() for name in re.split(r'[\n,;]+', str(data.get('players_list', ''))) if name.strip()]
 
     if len(team_name) < 2 or len(team_name) > 80:
-        return json_error('Nazwa druzyny musi miec od 2 do 80 znakow.', 400)
+        return json_error('Nazwa drużyny musi mieć od 2 do 80 znaków.', 400)
     if not re.fullmatch(r'[A-Za-z0-9_]{2,16}', team_tag):
-        return json_error('Tag druzyny moze zawierac 2-16 liter, cyfr lub znakow podkreslenia.', 400)
+        return json_error('Tag drużyny może zawierać 2-16 liter, cyfr lub znaków podkreślenia.', 400)
     if len(players) < 8:
-        return json_error('Zgloszenie musi zawierac co najmniej 8 nickow zawodnikow.', 400)
+        return json_error('Zgłoszenie musi zawierać co najmniej 8 nicków zawodników.', 400)
     if len(players) > 20 or any(len(name) > 40 for name in players):
-        return json_error('Zgloszenie moze zawierac maksymalnie 20 nickow, kazdy do 40 znakow.', 400)
+        return json_error('Zgłoszenie może zawierać maksymalnie 20 nicków, każdy do 40 znaków.', 400)
     if len({name.casefold() for name in players}) != len(players):
-        return json_error('Lista zawodnikow zawiera powtarzajace sie nicki.', 400)
+        return json_error('Lista zawodników zawiera powtarzające się nicki.', 400)
 
     conn = connect_db()
     duplicate = conn.execute(
@@ -340,7 +313,7 @@ def submit_team_registration():
     ).fetchone()
     if duplicate:
         conn.close()
-        return json_error('Druzyna o tej nazwie lub tagu juz istnieje albo oczekuje na weryfikacje.', 409)
+        return json_error('Drużyna o tej nazwie lub tagu już istnieje albo oczekuje na weryfikację.', 409)
 
     cursor = conn.execute(
         'INSERT INTO team_registrations (team_name, team_tag, players_list, status) VALUES (%s, %s, %s, %s) RETURNING id',
@@ -349,7 +322,7 @@ def submit_team_registration():
     registration_id = cursor.fetchone()['id']
     conn.commit()
     conn.close()
-    return jsonify({'message': 'Zgloszenie zostalo wyslane do weryfikacji.', 'registration_id': registration_id}), 201
+    return jsonify({'message': 'Zgłoszenie zostało wysłane do weryfikacji.', 'registration_id': registration_id}), 201
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -357,7 +330,7 @@ def login():
     username = str(data.get('username', '')).strip()
     password = str(data.get('password', ''))
     if not username or not password:
-        return json_error('Podaj nazwe uzytkownika i haslo.', 400)
+        return json_error('Podaj nazwę użytkownika i hasło.', 400)
 
     conn = connect_db()
     user = conn.execute(
@@ -366,7 +339,7 @@ def login():
     ).fetchone()
     conn.close()
     if not user or user['role'] not in ('captain', 'super_admin') or not user['password_hash'] or not check_password_hash(user['password_hash'], password):
-        return json_error('Nieprawidlowa nazwa uzytkownika lub haslo.', 401)
+        return json_error('Nieprawidłowa nazwa użytkownika lub hasło.', 401)
 
     session.clear()
     session['user_id'] = user['id']
@@ -398,7 +371,7 @@ def change_captain_password():
     current_password = str(data.get('current_password', ''))
     new_password = str(data.get('new_password', ''))
     if len(new_password) < 12:
-        return json_error('Nowe haslo musi miec co najmniej 12 znakow.', 400)
+        return json_error('Nowe hasło musi mieć co najmniej 12 znaków.', 400)
 
     conn = connect_db()
     user = conn.execute(
@@ -407,14 +380,14 @@ def change_captain_password():
     ).fetchone()
     if not user or not user['password_hash'] or not check_password_hash(user['password_hash'], current_password):
         conn.close()
-        return json_error('Aktualne haslo jest nieprawidlowe.', 401)
+        return json_error('Aktualne hasło jest nieprawidłowe.', 401)
     conn.execute(
         'UPDATE users SET password_hash = %s WHERE id = %s',
         (generate_password_hash(new_password), session['user_id'])
     )
     conn.commit()
     conn.close()
-    return jsonify({'message': 'Haslo zostalo zmienione.'})
+    return jsonify({'message': 'Hasło zostało zmienione.'})
 
 @app.route('/api/captain/fixtures', methods=['GET'])
 @require_roles('captain')
@@ -446,15 +419,14 @@ def upload_screenshot():
         (fixture_id,)
     ).fetchone()
     conn.close()
-
     if not fixture or session['team_id'] not in (fixture['team_a_id'], fixture['team_b_id']):
-        return json_error('Nie mozesz przeslac wyniku tego meczu.', 403)
+        return json_error('Nie możesz przesłać wyniku tego meczu.', 403)
 
     uploaded_file = request.files.get('file')
     if not uploaded_file or not uploaded_file.filename:
         return json_error('Wybierz zrzut ekranu.', 400)
     safe_name = secure_filename(uploaded_file.filename)
-    extension = os.path.splitext(safe_name).lower()
+    extension = os.path.splitext(safe_name)[1].lower()
     if extension not in ('.png', '.jpg', '.jpeg', '.webp'):
         return json_error('Dozwolone formaty: PNG, JPG i WEBP.', 400)
 
@@ -467,32 +439,26 @@ def upload_screenshot():
             image.verify()
     except Exception:
         os.remove(filepath)
-        return json_error('Nie udalo sie odczytac tego obrazu.', 400)
+        return json_error('Nie udało się odczytać tego obrazu.', 400)
 
     try:
         pytesseract.get_tesseract_version()
     except pytesseract.TesseractNotFoundError:
         os.remove(filepath)
-        return json_error('Brak silnika Tesseract OCR. Zainstaluj Tesseract.', 503)
+        return json_error('Brak silnika Tesseract OCR. Zainstaluj Tesseract i dodaj go do PATH albo ustaw zmienną TESSERACT_CMD.', 503)
 
     detected_stats = process_screenshot_bot(filepath)
-    discord_cdn_url = upload_to_discord_storage(filepath)
-    
-    if discord_cdn_url and os.path.exists(filepath):
-        os.remove(filepath)
-
-    final_screenshot_url = discord_cdn_url if discord_cdn_url else url_for('admin_screenshot', filename=filename)
-
     upload_token = secrets.token_urlsafe(24)
     uploads = session.get('captain_uploads', {})
-    uploads[str(fixture_id)] = {'filename': final_screenshot_url, 'token': upload_token}
+    uploads[str(fixture_id)] = {'filename': filename, 'token': upload_token}
     session['captain_uploads'] = uploads
     return jsonify({
-        'message': 'Zrzut ekranu przeanalizowany i zapisany w chmurze Discorda.',
+        'message': 'Zrzut ekranu przeanalizowany.',
         'upload_token': upload_token,
-        'screenshot_url': final_screenshot_url,
+        'screenshot_url': url_for('admin_screenshot', filename=filename),
         'detected_stats': detected_stats
     })
+
 @app.route('/api/captain/fixtures/<int:fixture_id>/submit', methods=['POST'])
 @require_roles('captain')
 def submit_fixture_result(fixture_id):
@@ -500,11 +466,11 @@ def submit_fixture_result(fixture_id):
     uploads = session.get('captain_uploads', {})
     upload = uploads.get(str(fixture_id))
     if not upload or not secrets.compare_digest(str(data.get('upload_token', '')), upload['token']):
-        return json_error('Najpierw przeslij zrzut ekranu tego meczu.', 400)
+        return json_error('Najpierw prześlij zrzut ekranu tego meczu.', 400)
 
     map_name = str(data.get('map_name', '')).strip()
     if not map_name or len(map_name) > 80:
-        return json_error('Podaj nazwe mapy (maksymalnie 80 znakow).', 400)
+        return json_error('Podaj nazwę mapy (maksymalnie 80 znaków).', 400)
 
     def read_score(field, maximum):
         value = data.get(field)
@@ -516,16 +482,16 @@ def submit_fixture_result(fixture_id):
         score_maps_a = read_score('score_maps_a', 3)
         score_maps_b = read_score('score_maps_b', 3)
     except ValueError as error:
-        return json_error(f'Nieprawidlowy wynik: {error.args}.', 400)
+        return json_error(f'Nieprawidłowy wynik: {error.args[0]}.', 400)
     if max(score_maps_a, score_maps_b) != 3 or score_maps_a == score_maps_b:
-        return json_error('Wynik BO5 musi konczyc sie zwyciestwem jednej druzyny 3-x.', 400)
+        return json_error('Wynik BO5 musi kończyć się zwycięstwem jednej drużyny 3-x.', 400)
 
     points_a = points_for_map_score(score_maps_a, score_maps_b)
     points_b = points_for_map_score(score_maps_b, score_maps_a)
 
     stats = data.get('stats')
     if not isinstance(stats, list) or not stats or len(stats) > 20:
-        return json_error('Brak poprawnych statystyk zawodnikow.', 400)
+        return json_error('Brak poprawnych statystyk zawodników.', 400)
 
     conn = connect_db()
     fixture = conn.execute(
@@ -534,7 +500,7 @@ def submit_fixture_result(fixture_id):
     ).fetchone()
     if not fixture or session['team_id'] not in (fixture['team_a_id'], fixture['team_b_id']):
         conn.close()
-        return json_error('Nie mozesz zglosic wyniku tego meczu.', 403)
+        return json_error('Nie możesz zgłosić wyniku tego meczu.', 403)
 
     player_stats = []
     seen_players = set()
@@ -542,7 +508,7 @@ def submit_fixture_result(fixture_id):
     for stat in stats:
         if not isinstance(stat, dict):
             conn.close()
-            return json_error('Nieprawidlowy wiersz statystyk.', 400)
+            return json_error('Nieprawidłowy wiersz statystyk.', 400)
         nickname = str(stat.get('nickname', '')).strip()
         player = conn.execute(
             '''SELECT id, nickname FROM players
@@ -551,13 +517,13 @@ def submit_fixture_result(fixture_id):
         ).fetchone()
         if not player or player['id'] in seen_players:
             conn.close()
-            return json_error(f'Nieznany lub powtorzony zawodnik: {nickname}.', 400)
+            return json_error(f'Nieznany lub powtórzony zawodnik: {nickname}.', 400)
         values = []
         for field in stat_fields:
             value = stat.get(field, 0)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 99999:
                 conn.close()
-                return json_error(f'Nieprawidlowa wartosc {field} dla {nickname}.', 400)
+                return json_error(f'Nieprawidłowa wartość {field} dla {nickname}.', 400)
             values.append(value)
         seen_players.add(player['id'])
         player_stats.append((player['id'], values))
@@ -573,8 +539,8 @@ def submit_fixture_result(fixture_id):
         '''INSERT INTO player_match_stats
            (single_match_id, player_id, kills, deaths, asysty, damage, plants, defuses, aces)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''',
-        [(single_match_id, player_id, v[0], v[1], v[2], v[3], v[4], v[5], v[6])
-         for player_id, v in player_stats]
+        [(single_match_id, player_id, values[0], values[1], values[2], values[3], values[4], values[5], values[6])
+         for player_id, values in player_stats]
     )
     conn.execute(
         '''UPDATE fixtures SET score_maps_a = %s, score_maps_b = %s, points_a = %s, points_b = %s,
@@ -585,7 +551,7 @@ def submit_fixture_result(fixture_id):
     conn.close()
     uploads.pop(str(fixture_id), None)
     session['captain_uploads'] = uploads
-    return jsonify({'message': 'Wynik i statystyki wyslano do zatwierdzenia.'}), 201
+    return jsonify({'message': 'Wynik i statystyki wysłano do zatwierdzenia.'}), 201
 
 @app.route('/api/admin/registrations', methods=['GET'])
 @require_roles('super_admin')
@@ -615,7 +581,7 @@ def approve_team_registration(registration_id):
     ).fetchone()
     if not registration:
         conn.close()
-        return json_error('Zgloszenie nie istnieje lub zostalo juz rozpatrzone.', 404)
+        return json_error('Zgłoszenie nie istnieje lub zostało już rozpatrzone.', 404)
 
     players = [name.strip() for name in registration['players_list'].splitlines() if name.strip()]
     captain_username = f"{registration['team_tag']}_captain"
@@ -640,13 +606,13 @@ def approve_team_registration(registration_id):
         )
         conn.execute("UPDATE team_registrations SET status = 'approved' WHERE id = %s", (registration_id,))
         conn.commit()
-    except IntegrityError:
+    except IntegrityError as error:
         conn.rollback()
         conn.close()
-        return json_error(f'Nie mozna zatwierdzic druzyny. Sprawdz czy tag lub nicki nie sa uzywane.', 409)
+        return json_error(f'Nie można zatwierdzić drużyny: {error}. Sprawdź, czy tag lub nicki nie są już używane.', 409)
     conn.close()
     return jsonify({
-        'message': 'Druzyna zostala zatwierdzona.',
+        'message': 'Drużyna została zatwierdzona.',
         'captain': {'username': captain_username, 'temporary_password': captain_password},
         'player_pins': player_pins
     })
@@ -662,8 +628,8 @@ def reject_team_registration(registration_id):
     conn.commit()
     conn.close()
     if not cursor.rowcount:
-        return json_error('Zgloszenie nie istnieje lub zostalo juz rozpatrzone.', 404)
-    return jsonify({'message': 'Zgloszenie zostalo odrzucone.'})
+        return json_error('Zgłoszenie nie istnieje lub zostało już rozpatrzone.', 404)
+    return jsonify({'message': 'Zgłoszenie zostało odrzucone.'})
 
 @app.route('/api/admin/teams', methods=['GET'])
 @require_roles('super_admin')
@@ -687,7 +653,7 @@ def delete_team(team_id):
     if not team:
         conn.rollback()
         conn.close()
-        return json_error('Nie znaleziono druzyny.', 404)
+        return json_error('Nie znaleziono drużyny.', 404)
 
     screenshots = conn.execute('''
         SELECT sm.screenshot_url
@@ -695,14 +661,11 @@ def delete_team(team_id):
         JOIN fixtures f ON f.id = sm.fixture_id
         WHERE f.team_a_id = %s OR f.team_b_id = %s
     ''', (team_id, team_id)).fetchall()
-    
     conn.execute('''
-        DELETE FROM mvp_votes
+        DELETE FROM votes
         WHERE voter_player_id IN (SELECT id FROM players WHERE team_id = %s)
-           OR rank_1_player_id IN (SELECT id FROM players WHERE team_id = %s)
-           OR rank_2_player_id IN (SELECT id FROM players WHERE team_id = %s)
-           OR rank_3_player_id IN (SELECT id FROM players WHERE team_id = %s)
-    ''', (team_id, team_id, team_id, team_id))
+           OR voted_player_id IN (SELECT id FROM players WHERE team_id = %s)
+    ''', (team_id, team_id))
 
     conn.execute('DELETE FROM users WHERE team_id = %s', (team_id,))
     conn.execute('''
@@ -720,18 +683,17 @@ def delete_team(team_id):
     ''', (team_id, team_id))
     conn.execute('DELETE FROM fixtures WHERE team_a_id = %s OR team_b_id = %s', (team_id, team_id))
     conn.execute('UPDATE single_matches SET winner_team_id = NULL WHERE winner_team_id = %s', (team_id,))
+    conn.execute('DELETE FROM players WHERE team_id = %s', (team_id,))
     conn.execute('DELETE FROM teams WHERE id = %s', (team_id,))
     conn.commit()
     conn.close()
 
     for screenshot in screenshots:
-        url_val = screenshot['screenshot_url'] or ''
-        if 'http' not in url_val:
-            filename = secure_filename(os.path.basename(url_val))
-            filepath = os.path.join(UPLOAD_FOLDER, filename)
-            if filename and os.path.isfile(filepath):
-                os.remove(filepath)
-    return jsonify({'message': f'Druzyna {team["name"]} i powiazane dane zostaly usuniete.'})
+        filename = secure_filename(os.path.basename(screenshot['screenshot_url'] or ''))
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        if filename and os.path.isfile(filepath):
+            os.remove(filepath)
+    return jsonify({'message': f'Drużyna {team["name"]} i powiązane dane zostały usunięte.'})
 
 @app.route('/api/admin/generate_schedule', methods=['POST'])
 @require_roles('super_admin')
@@ -742,11 +704,11 @@ def generate_schedule():
     if len(teams) < 2:
         conn.rollback()
         conn.close()
-        return json_error('Do wygenerowania terminarza potrzeba co najmniej 2 zatwierdzonych druzyn.', 400)
+        return json_error('Do wygenerowania terminarza potrzeba co najmniej 2 zatwierdzonych drużyn.', 400)
     if conn.execute('SELECT 1 FROM fixtures LIMIT 1').fetchone():
         conn.rollback()
         conn.close()
-        return json_error('Terminarz juz istnieje. Nie mozna wygenerowac drugiego zestawu meczow.', 409)
+        return json_error('Terminarz już istnieje. Nie można wygenerować drugiego zestawu meczów.', 409)
 
     rotation = [team['id'] for team in teams]
     team_names = {team['id']: team['name'] for team in teams}
@@ -778,7 +740,7 @@ def generate_schedule():
     conn.commit()
     conn.close()
     return jsonify({
-        'message': 'Terminarz ligi zostal wygenerowany.',
+        'message': 'Terminarz ligi został wygenerowany.',
         'team_count': len(teams),
         'round_count': len(rotation) - 1,
         'fixture_count': len(fixture_rows),
@@ -826,7 +788,7 @@ def get_fixture_details(fixture_id):
     ''', (fixture_id,)).fetchone()
     if not fixture:
         conn.close()
-        return json_error('Szczegoly sa dostepne po zatwierdzeniu meczu.', 404)
+        return json_error('Szczegóły są dostępne po zatwierdzeniu meczu.', 404)
 
     matches = conn.execute('''
         SELECT sm.id, sm.match_number, sm.map_name, sm.winner_team_id, sm.screenshot_url,
@@ -848,19 +810,14 @@ def get_fixture_details(fixture_id):
             WHERE pms.single_match_id = %s
             ORDER BY p.nickname
         ''', (match['id'],)).fetchall()
-        
         screenshot_name = os.path.basename(match['screenshot_url'] or '')
-        img_url = match['screenshot_url']
-        if img_url and 'http' not in img_url:
-            img_url = url_for('fixture_screenshot', filename=screenshot_name)
-            
         match_details.append({
             'id': match['id'],
             'match_number': match['match_number'],
             'map_name': match['map_name'],
             'winner_team_id': match['winner_team_id'],
             'winner_team': match['winner_team'],
-            'screenshot_url': img_url,
+            'screenshot_url': url_for('fixture_screenshot', filename=screenshot_name) if screenshot_name else None,
             'stats': [dict(stat) for stat in stats]
         })
     conn.close()
@@ -870,7 +827,7 @@ def get_fixture_details(fixture_id):
 def fixture_screenshot(filename):
     safe_filename = secure_filename(filename)
     if safe_filename != filename:
-        return json_error('Nieprawidlowa nazwa pliku.', 400)
+        return json_error('Nieprawidłowa nazwa pliku.', 400)
     conn = connect_db()
     is_public = conn.execute('''
         SELECT 1 FROM single_matches sm
@@ -880,7 +837,7 @@ def fixture_screenshot(filename):
     ''', (safe_filename,)).fetchone()
     conn.close()
     if not is_public:
-        return json_error('Zrzut ekranu nie jest dostepny publicznie.', 404)
+        return json_error('Zrzut ekranu nie jest dostępny publicznie.', 404)
     return send_from_directory(UPLOAD_FOLDER, safe_filename)
 
 @app.route('/api/admin/fixtures', methods=['GET'])
@@ -899,7 +856,7 @@ def get_pending_fixtures():
     for fixture in fixtures:
         matches = conn.execute('''
             SELECT sm.id, sm.match_number, sm.map_name, sm.screenshot_url,
-                   p.nickname, pms.id as stat_row_id, pms.kills, pms.deaths, pms.asysty AS assists,
+                   p.nickname, pms.kills, pms.deaths, pms.asysty AS assists,
                    pms.damage, pms.plants, pms.defuses, pms.aces
             FROM single_matches sm
             LEFT JOIN player_match_stats pms ON pms.single_match_id = sm.id
@@ -908,26 +865,22 @@ def get_pending_fixtures():
         ''', (fixture['id'],)).fetchall()
         match_map = {}
         for match in matches:
-            img_url = match['screenshot_url']
-            if img_url and 'http' not in img_url:
-                img_url = url_for('admin_screenshot', filename=img_url)
-                
             item = match_map.setdefault(match['id'], {
                 'match_number': match['match_number'],
                 'map_name': match['map_name'],
-                'screenshot_url': img_url,
+                'screenshot_url': url_for('admin_screenshot', filename=match['screenshot_url']),
                 'stats': []
             })
             if match['nickname']:
                 item['stats'].append({
-                    'stat_id': match['stat_row_id'], 'nickname': match['nickname'], 'kills': match['kills'],
+                    'nickname': match['nickname'], 'kills': match['kills'],
                     'deaths': match['deaths'], 'assists': match['assists'],
                     'damage': match['damage'], 'plants': match['plants'],
                     'defuses': match['defuses'], 'aces': match['aces']
                 })
-        item_dict = dict(fixture)
-        item_dict['matches'] = list(match_map.values())
-        result.append(item_dict)
+        item = dict(fixture)
+        item['matches'] = list(match_map.values())
+        result.append(item)
     conn.close()
     return jsonify(result)
 
@@ -943,14 +896,16 @@ def approve_fixture(fixture_id):
     conn.close()
     if not cursor.rowcount:
         return json_error('Mecz nie oczekuje na zatwierdzenie.', 404)
-    return jsonify({'message': 'Mecz zatwierdzono. Wyniki sa widoczne.'})
+    return jsonify({'message': 'Mecz zatwierdzono. Wyniki są już widoczne w rankingach.'})
 
 @app.route('/api/admin/fixtures/<int:fixture_id>/reject', methods=['POST'])
 @require_roles('super_admin')
 def reject_fixture(fixture_id):
     conn = connect_db()
     fixture = conn.execute(
-            ).fetchone()
+        "SELECT id FROM fixtures WHERE id = %s AND status = 'pending_approval' FOR UPDATE",
+        (fixture_id,)
+    ).fetchone()
     if not fixture:
         conn.close()
         return json_error('Mecz nie oczekuje na zatwierdzenie.', 404)
@@ -970,20 +925,18 @@ def reject_fixture(fixture_id):
     conn.commit()
     conn.close()
     for screenshot in screenshots:
-        url_val = screenshot['screenshot_url'] or ''
-        if 'http' not in url_val:
-            filename = secure_filename(os.path.basename(url_val))
-            filepath = os.path.join(UPLOAD_FOLDER, filename)
-            if filename and os.path.isfile(filepath):
-                os.remove(filepath)
-    return jsonify({'message': 'Wynik odrzucono. Kapitan moze przeslac go ponownie.'})
+        filename = secure_filename(os.path.basename(screenshot['screenshot_url'] or ''))
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        if filename and os.path.isfile(filepath):
+            os.remove(filepath)
+    return jsonify({'message': 'Wynik odrzucono. Kapitan może przesłać go ponownie.'})
 
 @app.route('/api/admin/screenshots/<path:filename>', methods=['GET'])
 @require_roles('super_admin')
 def admin_screenshot(filename):
     safe_filename = secure_filename(filename)
     if safe_filename != filename:
-        return json_error('Nieprawidlowa nazwa pliku.', 400)
+        return json_error('Nieprawidłowa nazwa pliku.', 400)
     return send_from_directory(UPLOAD_FOLDER, safe_filename)
 
 @app.route('/api/team_standings', methods=['GET'])
@@ -1062,6 +1015,8 @@ def get_team_standings():
 @app.route('/api/leaderboards', methods=['GET'])
 def get_leaderboards():
     conn = connect_db()
+    
+    # Pobieramy pełne, zsumowane statystyki wyłącznie z zatwierdzonych meczów (status = 'finished')
     query = '''
         SELECT p.nickname AS nickname, t.name AS team,
                COALESCE(SUM(s.kills), 0) as total_kills,
@@ -1098,17 +1053,32 @@ def get_leaderboards():
         mvp = row['total_mvp']
         m_played = row['matches_played']
         
+        # Ochrona przed dzieleniem przez zero
         avg_deaths = float(deaths) / float(m_played) if m_played > 0 else 0.0
+        
+        # NOWY WZÓR NA CESARZA: Kills(1) + Assists(0.5) + Aces(2) + Plants(0.5) + Defuses(0.5)
         cesarz_points = float(kills) + (float(assists) * 0.5) + (float(aces) * 2.0) + (float(plants) * 0.5) + (float(defuses) * 0.5)
         
         players_stats.append({
-            "player": nick, "team": team, "kills": kills, "deaths": deaths, "assists": assists,
-            "damage": dmg, "plants": plants, "defuses": defuses, "aces": aces, "mvp": mvp,
-            "matches_played": m_played, "avg_deaths": round(avg_deaths, 2), "cesarz": cesarz_points
+            "player": nick,
+            "team": team,
+            "kills": kills,
+            "deaths": deaths,
+            "assists": assists,
+            "damage": dmg,
+            "plants": plants,
+            "defuses": defuses,
+            "aces": aces,
+            "mvp": mvp,
+            "matches_played": m_played,
+            "avg_deaths": round(avg_deaths, 2),
+            "cesarz": cesarz_points
         })
         
+    # Filtrujemy tylko graczy, którzy rozegrali chociaż 1 mecz do statystyki Nieśmiertelnego
     active_players = [p for p in players_stats if p["matches_played"] > 0]
     
+    # Sortowanie kategorii (Dla Nieśmiertelnego reverse=False, bo szukamy NAJMNIEJSZEJ średniej)
     krol_killi = sorted(players_stats, key=lambda x: x["kills"], reverse=True)[:10]
     krol_asyst = sorted(players_stats, key=lambda x: x["assists"], reverse=True)[:10]
     krol_damage = sorted(players_stats, key=lambda x: x["damage"], reverse=True)[:10]
@@ -1116,8 +1086,11 @@ def get_leaderboards():
     niesmiertelny = sorted(active_players, key=lambda x: x["avg_deaths"], reverse=False)[:10]
     
     return jsonify({
-        "krol_killi": krol_killi, "krol_asyst": krol_asyst, "krol_damage": krol_damage,
-        "cesarz": cesarz, "niesmiertelny": niesmiertelny
+        "krol_killi": krol_killi,
+        "krol_asyst": krol_asyst,
+        "krol_damage": krol_damage,
+        "cesarz": cesarz,
+        "niesmiertelny": niesmiertelny
     })
 
 @app.route('/api/teams_rosters', methods=['GET'])
@@ -1160,8 +1133,8 @@ def get_teams_rosters():
     teams_by_id = {}
     for row in rows:
         team = teams_by_id.setdefault(row['team_id'], {
-            'team_id': row['team_id'], 
-            'team_name': row['team_name'], 
+            'team_id': row['team_id'],
+            'team_name': row['team_name'],
             'players': []
         })
         if row['player_id'] is not None:
@@ -1177,7 +1150,6 @@ def get_teams_rosters():
                 'total_aces': row['total_aces']
             })
     return jsonify(list(teams_by_id.values()))
-
 
 @app.route('/api/mvp_results', methods=['GET'])
 def get_mvp_results():
@@ -1208,7 +1180,10 @@ def get_mvp_status():
     ''').fetchone()
     conn.close()
     locked = status['locked']
-    return jsonify({'locked': locked, 'message': MVP_LOCK_MESSAGE if locked else 'Glosowanie MVP jest otwarte.'})
+    return jsonify({
+        'locked': locked,
+        'message': MVP_LOCK_MESSAGE if locked else 'Głosowanie MVP jest otwarte.'
+    })
 
 @app.route('/api/mvp_votes', methods=['POST'])
 def submit_mvp_vote():
@@ -1226,15 +1201,15 @@ def submit_mvp_vote():
     voter_type = str(data.get('voter_type', '')).strip().upper()
     if voter_type not in ('ZAWODNIK', 'KIBIC'):
         conn.close()
-        return json_error('Wybierz typ glosujacego.', 400)
+        return json_error('Wybierz typ głosującego.', 400)
 
     rank_ids = [data.get('rank_1_player_id'), data.get('rank_2_player_id'), data.get('rank_3_player_id')]
-    if any(isinstance(pid, bool) or not isinstance(pid, int) or pid < 1 for pid in rank_ids):
+    if any(isinstance(player_id, bool) or not isinstance(player_id, int) or player_id < 1 for player_id in rank_ids):
         conn.close()
-        return json_error('Wybierz trzech zawodnikow w rankingu 1, 2 i 3.', 400)
+        return json_error('Wybierz trzech zawodników w rankingu 1, 2 i 3.', 400)
     if len(set(rank_ids)) != 3:
         conn.close()
-        return json_error('Kazde miejsce musi wskazywac innego zawodnika.', 400)
+        return json_error('Każde miejsce musi wskazywać innego zawodnika.', 400)
 
     voter_player_id = None
     voter_team_id = None
@@ -1242,71 +1217,41 @@ def submit_mvp_vote():
         pin_code = str(data.get('pin_code', '')).strip()
         if not re.fullmatch(r'\d{6}', pin_code):
             conn.close()
-            return json_error('Podaj swoj 6-cyfrowy PIN zawodnika.', 400)
-        voter = conn.execute('SELECT id, team_id FROM players WHERE pin_code = %s FOR UPDATE', (pin_code,)).fetchone()
+            return json_error('Podaj swój 6-cyfrowy PIN zawodnika.', 400)
+        voter = conn.execute(
+            'SELECT id, team_id FROM players WHERE pin_code = %s FOR UPDATE',
+            (pin_code,)
+        ).fetchone()
         if not voter:
             conn.close()
-            return json_error('Nieprawidlowy PIN zawodnika.', 401)
+            return json_error('Nieprawidłowy PIN zawodnika.', 401)
         voter_player_id = voter['id']
         voter_team_id = voter['team_id']
 
-    candidates = conn.execute('SELECT id, team_id FROM players WHERE id = ANY(%s)', (rank_ids,)).fetchall()
+    candidates = conn.execute(
+        'SELECT id, team_id FROM players WHERE id = ANY(%s)',
+        (rank_ids,)
+    ).fetchall()
     if len(candidates) != 3:
         conn.close()
-        return json_error('Jeden z wybranych zawodnikow nie istnieje.', 400)
-    if voter_team_id is not None and any(c['team_id'] == voter_team_id for c in candidates):
+        return json_error('Jeden z wybranych zawodników nie istnieje.', 400)
+    if voter_team_id is not None and any(candidate['team_id'] == voter_team_id for candidate in candidates):
         conn.close()
-        return json_error('Zawodnik nie moze glosowac na graczy ze swojej druzyny.', 403)
+        return json_error('Zawodnik nie może głosować na graczy ze swojej drużyny.', 403)
 
     try:
         conn.execute('''
-            INSERT INTO mvp_votes (voter_player_id, voter_type, rank_1_player_id, rank_2_player_id, rank_3_player_id)
+            INSERT INTO mvp_votes
+                (voter_player_id, voter_type, rank_1_player_id, rank_2_player_id, rank_3_player_id)
             VALUES (%s, %s, %s, %s, %s)
         ''', (voter_player_id, voter_type, *rank_ids))
         conn.commit()
     except IntegrityError:
         conn.rollback()
         conn.close()
-        return json_error('Ten zawodnik oddal juz swoj glos.', 409)
+        return json_error('Ten zawodnik oddał już swój głos.', 409)
     conn.close()
-    return jsonify({'message': 'Glos MVP zostal zapisany.'}), 201
-
-# =========================================================================
-# LEKKA, TEKSTOWA WERSJA PODGLADU TABELI I WYNIKOW (Zajmuje malo miejsca)
-# =========================================================================
-@app.route('/api/text_standings', methods=['GET'])
-def get_text_only_standings():
-    conn = connect_db()
-    rows = conn.execute('''
-        SELECT t.name as team, 
-               COALESCE(SUM(CASE WHEN f.status = 'finished' AND f.team_a_id = t.id THEN f.points_a WHEN f.status = 'finished' AND f.team_b_id = t.id THEN f.points_b ELSE 0 END), 0) as pts
-        FROM teams t
-        LEFT JOIN fixtures f ON t.id = f.team_a_id OR t.id = f.team_b_id
-        GROUP BY t.id, t.name
-        ORDER BY pts DESC, lower(t.name) ASC
-    ''').fetchall()
-    conn.close()
-
-    output_lines = ["=== BALISTIC POLAND LEAGUE ==="]
-    for i, row in enumerate(rows, start=1):
-        output_lines.append(f"{i}. [{row['pts']} pkt] - {row['team']}")
-        
-    return jsonify({
-        "text_view": "\n".join(output_lines),
-        "raw_json": [dict(r) for r in rows]
-    })
-@app.route('/')
-def home_page_graphic_dashboard_view():
-    """
-    Glowna strona serwera - laduje pelny, graficzny panel ligowy
-    z tabelami, formularzami zgloszen i logowaniem dla kapitanow.
-    """
-    try:
-        with open('templates/index.html', 'r', encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        return "<h1>Balistic Poland League</h1><p>Blad: Brak pliku index.html w folderze templates.</p>", 404
-
+    return jsonify({'message': 'Głos MVP został zapisany.'}), 201
 
 if __name__ == '__main__':
     init_advanced_db()
