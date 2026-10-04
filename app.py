@@ -1296,12 +1296,16 @@ def get_text_only_standings():
         "raw_json": [dict(r) for r in rows]
     })
 @app.route('/')
-def home_page_index_view():
+def home_page_graphic_dashboard_view():
+    """
+    Glowna strona serwera - laduje pelny, graficzny panel ligowy
+    z tabelami, formularzami zgloszen i logowaniem dla kapitanow.
+    """
     try:
-        with open('regulamin.html', 'r', encoding='utf-8') as f:
+        with open('templates/index.html', 'r', encoding='utf-8') as f:
             return f.read()
     except FileNotFoundError:
-        return "<h1>Balistic Poland League</h1><p>Blad: Brak pliku regulamin.html w katalogu glownym serwera.</p>", 404
+        return "<h1>Balistic Poland League</h1><p>Blad: Brak pliku index.html w folderze templates.</p>", 404
 
 
 if __name__ == '__main__':
