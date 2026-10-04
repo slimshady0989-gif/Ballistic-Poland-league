@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Balistic Poland League | Panel</title>
+    <!-- NAPRAWIONY LINK DO STYLOW BOOTSTRAP -->
     <link href="https://jsdelivr.net" rel="stylesheet">
     <style>
         body { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; }
@@ -36,3 +37,111 @@
                 </div>
             </div>
         </div>
+
+        <!-- SEKCJA ZGŁOSZEŃ DRUŻYN -->
+        <div class="row mt-4" id="zgloszenia">
+            <div class="col-md-6">
+                <div class="card p-4">
+                    <h3 class="card-title border-bottom border-secondary pb-2">Zgloszenia do ligi</h3>
+                    <div class="mb-3">
+                        <label class="form-label">Nazwa druzyny</label>
+                        <input type="text" id="reg-name" class="form-control bg-dark text-white border-secondary">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Tag druzyny</label>
+                        <input type="text" id="reg-tag" class="form-control bg-dark text-white border-secondary" placeholder="np. BPL">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Nicki zawodnikow (minimum 8, kazdy w nowej linii)</label>
+                        <textarea id="reg-players" class="form-control bg-dark text-white border-secondary" rows="5"></textarea>
+                    </div>
+                    <button onclick="submitRegistration()" class="btn btn-primary w-100">Wyslij zgloszenie</button>
+                    <div id="reg-msg" class="mt-2 small"></div>
+                </div>
+            </div>
+
+            <!-- PANEL LOGOWANIA -->
+            <div class="col-md-6" id="login">
+                <div class="card p-4">
+                    <h3 class="card-title border-bottom border-secondary pb-2">Panel Logowania</h3>
+                    <div class="mb-3">
+                        <label class="form-label">Nazwa uzytkownika</label>
+                        <input type="text" id="login-user" class="form-control bg-dark text-white border-secondary">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Haslo</label>
+                        <input type="password" id="login-pass" class="form-control bg-dark text-white border-secondary">
+                    </div>
+                    <button onclick="performLogin()" class="btn btn-secondary w-100">Zaloguj</button>
+                    <div id="login-msg" class="mt-2 small text-danger"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Automatyczne ladowanie tabeli tekstowej przy wejsciu na strone
+        async function loadTextStandings() {
+            try {
+                const res = await fetch('/api/text_standings');
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById('text-standings-box').textContent = data.text_view;
+                }
+            } catch (err) {
+                document.getElementById('text-standings-box').textContent = "Blad ladowania tabeli...";
+            }
+        }
+
+        async function submitRegistration() {
+            const msg = document.getElementById('reg-msg');
+            const payload = {
+                team_name: document.getElementById('reg-name').value,
+                team_tag: document.getElementById('reg-tag').value,
+                players_list: document.getElementById('reg-players').value
+            };
+            msg.className = "mt-2 small text-warning";
+            msg.innerText = "Wysylanie...";
+            
+            const res = await fetch('/api/registrations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                msg.className = "mt-2 small text-success";
+                msg.innerText = data.message;
+            } else {
+                msg.className = "mt-2 small text-danger";
+                msg.innerText = data.error || "Wystapil blad.";
+            }
+        }
+
+        async function performLogin() {
+            const msg = document.getElementById('login-msg');
+            const payload = {
+                username: document.getElementById('login-user').value,
+                password: document.getElementById('login-pass').value
+            };
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                msg.className = "mt-2 small text-success";
+                msg.innerText = "Zalogowano pomyslnie! Odswiezam...";
+                location.reload();
+            } else {
+                msg.className = "mt-2 small text-danger";
+                msg.innerText = data.error;
+            }
+        }
+
+        window.onload = loadTextStandings;
+    </script>
+</body>
+</html>
+
