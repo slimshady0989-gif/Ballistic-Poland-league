@@ -4,7 +4,7 @@ from discord.ext import commands, tasks
 import requests
 
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-API_URL = os.environ.get("API_URL", "http://localhost:5000/api/text_standings")
+API_URL = "https://onrender.com"
 TARGET_CHANNEL_ID = 1556251556465086506 
 intents = discord.Intents.default()
 intents.message_content = True
