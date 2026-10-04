@@ -720,7 +720,7 @@ def delete_team(team_id):
     ''', (team_id, team_id))
     conn.execute('DELETE FROM fixtures WHERE team_a_id = %s OR team_b_id = %s', (team_id, team_id))
     conn.execute('UPDATE single_matches SET winner_team_id = NULL WHERE winner_team_id = %s', (team_id,))
-       conn.execute('DELETE FROM teams WHERE id = %s', (team_id,))
+    conn.execute('DELETE FROM teams WHERE id = %s', (team_id,))
     conn.commit()
     conn.close()
 
