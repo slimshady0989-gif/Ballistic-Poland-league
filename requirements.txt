@@ -1,0 +1,7 @@
+Flask
+Pillow
+pytesseract
+psycopg2-binary
+gunicorn
+discord.py
+requests
