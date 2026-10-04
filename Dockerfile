@@ -23,4 +23,4 @@ COPY templates ./templates
 EXPOSE 10000
 
 # Zmodyfikowana komenda startowa: najpierw odpala bot.py w tle (&), a potem serwer WWW przez gunicorn
-CMD ["sh", "-c", "python -c 'from app import init_advanced_db; init_advanced_db()' && python bot.py & exec gunicorn app:app --bind 0.0.0.0:${PORT:-10000}"]
+CMD ["sh", "-c", "python -c 'from app import init_advanced_db; init_advanced_db()' && exec gunicorn app:app --bind 0.0.0.0:${PORT:-10000}"]
