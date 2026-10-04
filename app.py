@@ -1295,6 +1295,14 @@ def get_text_only_standings():
         "text_view": "\n".join(output_lines),
         "raw_json": [dict(r) for r in rows]
     })
+@app.route('/')
+def home_page_index_view():
+    try:
+        with open('regulamin.html', 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        return "<h1>Balistic Poland League</h1><p>Blad: Brak pliku regulamin.html w katalogu glownym serwera.</p>", 404
+
 
 if __name__ == '__main__':
     init_advanced_db()
