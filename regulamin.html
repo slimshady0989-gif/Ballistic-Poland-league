@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Regulamin Balistic Poland League</title>
+    <style>
+        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; line-height: 1.6; }
+        h1, h2 { color: #4f46e5; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .strefa { margin-bottom: 20px; background: #1e1e1e; padding: 15px; border-left: 4px solid #4f46e5; border-radius: 4px; }
+        .tabela-pkt { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .tabela-pkt th, .tabela-pkt td { border: 1px solid #333; padding: 8px; text-align: left; }
+        .tabela-pkt th { background-color: #252525; color: #4f46e5; }
+        strong { color: #fff; }
+        code { background-color: #2d2d2d; padding: 2px 6px; border-radius: 4px; color: #ff79c6; }
+    </style>
+</head>
+<body>
+    <h1>REGULAMIN ROZGRYWEK BALISTIC POLAND LEAGUE (BPL)</h1>
+    
+    <h2>ROZDZIAL 1: WARUNKI UCZESTNICTWA I STRUKTURA LIGI</h2>
+    <div class="strefa">
+        1. <strong>Narodowosc:</strong> Liga BPL jest przeznaczona wylacznie i bezwyjatkowo dla graczy pochodzenia polskiego. Wykrycie w skladzie gracza innej narodowosci skutkuje natychmiastowa dyskwalifikacja druzyny.<br>
+        2. <strong>Filozofia rozgrywek:</strong> W lidze obowiazuje ogolna zasada "wszystko dozwolone" (dotyczy taktyk, dozwolonych w grze przedmiotow i zagran), o ile nie naruszaja one kategorycznych zakazow opisanych w Rozdziale 2.<br>
+        3. <strong>Decyzje i rozwoj:</strong> Wszelkie kwestie dotyczace promocji do wyzszych klas, awansow, nagrod oraz zmian w strukturze ligi beda konsultowane bezposrednio ze spolecznoscia w drodze jawnych glosowan.<br>
+        4. <strong>Spolecznosc:</strong> Wszystkie pozostale zasady, kwestie sporne oraz szczegolowe punkty regulaminu niewymienione w tym dokumencie sa ustalane na biezaco bezposrednio ze spolecznoscia ligi.
+    </div>
+
+    <h2>ROZDZIAL 2: KATEGORYCZNE ZAKAZY I SANKCJE</h2>
+    <div class="strefa">
+        Naruszenie ktoregowolwiek z ponizszych punktow przez jakiegokolwiek zawodnika wiaze sie z przyznaniem walkowera (0:3) dla druzyny przeciwnej lub calkowitym usunieciem zespolu z ligi:<br>
+        1. <strong>Zewnetrzne oprogramowanie (Cheating):</strong> Calkowity zakaz uzywania wspomagaczy, aimbotow, wallhackow i innych modyfikacji ingerujacych w rozgrywke.<br>
+        2. <strong>Bledy gry (Exploity i Glitche):</strong> Calkowity zakaz wykorzystywania bledow gry, tekstur oraz mechanik w celu zyskania nieuzasadnionej przewagi.<br>
+        3. <strong>Toksycznosc i kultura:</strong> Zakaz zachowan powszechnie uznawanych za toksyczne (obrażanie na czacie tekstowym/glosowym, celowe dzialanie na szkode wlasnej lub przeciwnej druzyny).
+    </div>
+
+    <h2>ROZDZIAL 3: FORMAT MECZOW I DOGRYWKA "PISTOLS"</h2>
+    <div class="strefa">
+        1. <strong>Format BO5:</strong> Wszystkie oficjalne mecze ligowe rozgrywane sa w formacie Best of 5 (do 3 zwyciestw jednej z druzyn).<br>
+        2. <strong>Dogrywka na pistolety (Stan 2:2):</strong> Jezeli w meczu dojdzie do remisu 2:2 w mapach, ostatnia, piata (rozstrzygajaca) mapa musi zostac rozegrana wylacznie przy uzyciu zwyklych pistoletow.<br>
+        <ul>
+            <li>Uzycie jakiejkolwiek innej broni (karabinu, snajperki, granatu itp.) chociazby przez jednego zawodnika w tym meczu oznacza natychmiastowa przegrana calej mapy i meczu na korzysc rywali.</li>
+        </ul>
+    </div>
+
+    <h2>ROZDZIAL 4: INTEGRACJA Z DISCORDEM I AUTOMATYZACJA BOTA</h2>
+    <div class="strefa">
+        1. <strong>Zglaszanie wynikow:</strong> Kapitan wygranej druzyny ma obowiazek natychmiast po zakonczeniu meczu przeslac nieprzerobiony, pelny zrzut ekranu (screenshot) tabeli koncowej.<br>
+        2. <strong>Ochrona bazy (Magazyn plikow):</strong> Zdjecia sa automatycznie przesylane do ukrytego magazynu Discord CDN, aby nie marnowac limitow bazy PostgreSQL. Surowo zabrania sie nadsylania linkow zewnetrznych.<br>
+        3. <strong>Wersja tekstowa:</strong> Na oficjalnym kanale Discorda bot co 5 minut generuje ultrakompaktowa, tekstowa wersje tabeli rankingowej, aby oszczedzac transfer uzytkownikow i miejsce na ekranie telefonow.<br>
+        4. <strong>Korekta Administratora:</strong> Jezeli bot OCR nieprawidlowo odczyta cyfre ze zrzutu ekranu (np. pomyli 0 z 8 w liczbie killi), Administrator ma prawo do recznej korekty tej jednej cyfry w panelu, a zmiany od razu zaktualizuja wersje tekstowa na Discordzie.
+    </div>
+
+    <h2>ROZDZIAL 5: KANAL #ZGLOSZENIA-OSZUSTW</h2>
+    <div class="strefa">
+        1. <strong>Wymog dowodu:</strong> Kanal sluzy wylacznie do zglaszania oszustw, glitchy, uzywania nielegalnych skinow lub toksycznego zachowania.<br>
+        2. <strong>Automatyczne usuwanie:</strong> Kazda wiadomosc na tym kanale musi zawierac zalacznik (wideo/zdjecie) lub bezposredni link (np. YouTube/Twitch). Wiadomosci bez dowodow beda automatycznie usuwane przez bota, a gracz otrzyma ostrzezenie na PW.<br>
+        3. <strong>Weryfikacja:</strong> Administratorzy weryfikuja zgloszenia, dodajac pod nimi reakcje: ⏳ (w trakcie), ✅ (potwierdzone/kara), ❌ (brak dowodow/odrzucone).
+    </div>
+
+    <h2>ROZDZIAL 6: SYSTEM PUNKTACJI LIGOWEJ</h2>
+    <div class="strefa">
+        Punkty do tabeli sa naliczane automatycznie przez skrypt na podstawie stosunku wygranych map w meczu BO5:
+        <table class="tabela-pkt">
+            <thead>
+                <tr>
+                    <th>Wynik Meczu BO5</th>
+                    <th>Punkty dla Zwyciezcy</th>
+                    <th>Punkty dla Przegranego</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>3 : 0</strong></td>
+                    <td>3 pkt</td>
+                    <td>0 pkt</td>
+                </tr>
+                <tr>
+                    <td><strong>3 : 1</strong></td>
+                    <td>3 pkt</td>
+                    <td>1 pkt (nagroda za ugranie mapy)</td>
+                </tr>
+                <tr>
+                    <td><strong>3 : 2</strong></td>
+                    <td>3 pkt</td>
+                    <td>2 pkt (nagroda za zacieta walke do stanu 2:2)</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
